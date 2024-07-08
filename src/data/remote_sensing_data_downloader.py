@@ -47,7 +47,7 @@ class RemoteSensingLocalData:
         tif_path = os.path.join(self.dop_dir, tif_file)
         img = rio.open(tif_path)
         bbox = img.bounds
-        return (int(bbox.left), int(bbox.bottom))
+        return (int(bbox.left), int(bbox.top))
 
 
 class RemoteSensingDataDownloader:

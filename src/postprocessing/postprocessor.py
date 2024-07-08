@@ -67,20 +67,24 @@ class Postprocessor:
 
     def vectorize_mask(self,
                        mask,
-                       coordinates):
+                       coordinates,
+                       res=None):
         """
         | Exports a shape file (.shp) of the polygons in the vectorized mask given its coordinates
             of the top left corner in a subdirectory to the cached_tiles directory.
 
         :param np.ndarray[np.uint8] mask: mask
         :param (int, int) coordinates: coordinates (x, y)
+        :param float res: Resolution if default settings 0.2 m does not fit
         :returns: None
         :rtype: None
         """
-        transform = rio.transform.from_origin(west=coordinates[0],
-                                              north=coordinates[1],
-                                              xsize=settings.RESOLUTION,
-                                              ysize=settings.RESOLUTION)
+        transform = rio.transform.from_origin(
+            west=coordinates[0],
+            north=coordinates[1],
+            xsize=settings.RESOLUTION if res is None else res,
+            ysize=settings.RESOLUTION if res is None else res,
+        )
         vectorized_mask = rio.features.shapes(mask, transform=transform)
 
         features = [{'properties': {'class': Postprocessor.CLASS_MAP.get(int(value))}, 'geometry': shape}
@@ -183,11 +187,12 @@ class Postprocessor:
                                     axis=1)
         return gdf
 
-    def simplify_gdf(self, gdf):
+    def simplify_gdf(self, gdf, res=None):
         """
         | Returns a geodataframe with simplified polygons (Douglas-Peucker algorithm is used).
 
         :param gpd.GeoDataFrame gdf: geodataframe
+        :param float res: Resolution if default settings 0.2 m does not fit
         :returns: simplified geodataframe
         :rtype: gpd.GeoDataFrame
         """
@@ -195,7 +200,8 @@ class Postprocessor:
             return gdf
 
         topo = tp.Topology(gdf, prequantize=False)
-        simplified_gdf = topo.toposimplify(settings.RESOLUTION).to_gdf(crs=f'EPSG:{self.epsg_code}')
+        resolution = settings.RESOLUTION if res is None else res
+        simplified_gdf = topo.toposimplify(resolution).to_gdf(crs=f'EPSG:{self.epsg_code}')
         return simplified_gdf
 
     def clip_gdf(self, gdf):

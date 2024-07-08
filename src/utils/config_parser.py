@@ -176,6 +176,8 @@ class Data(BaseModel):
 
 class LocalData(BaseModel):
     dop_dir: str
+    dop_extension: str
+    resolution: float
     epsg_code: int
     boundary_shape_file_path: Optional[str] = None
     bounding_box: Optional[List[int]]

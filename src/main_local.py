@@ -138,8 +138,7 @@ def main():
                                    min_delta=0)
     progress_bar.refresh()
 
-    # rgbi_files = [x for x in os.listdir(config.data.dop_dir) if x.endswith(".tif")]
-    rgbi_files = [x for x in os.listdir(config.data.dop_dir) if x.endswith(".tif") and x.startswith("out")]
+    rgbi_files = [x for x in os.listdir(config.data.dop_dir) if x.endswith(config.data.dop_extension)]
     coordinates = []
     for index, rgbi_file in enumerate(rgbi_files):
         rgbi_image = rsdd_rgbi.get_image(rgbi_file)
@@ -156,7 +155,8 @@ def main():
 
         postprocessor.vectorize_mask(
             mask=mask,
-            coordinates=coordinates_element
+            coordinates=coordinates_element,
+            res=config.data.resolution,
         )
         logger.debug(f'Iteration {index + 1} / {iterations} -> mask vectorized and cached')
         logger.info(f'Iteration {index + 1} / {iterations} -> tile cached')
@@ -181,7 +181,7 @@ def main():
 
     if config.postprocessing.simplify:
         if postprocessed_gdf is not None:
-            postprocessed_gdf = postprocessor.simplify_gdf(postprocessed_gdf)
+            postprocessed_gdf = postprocessor.simplify_gdf(postprocessed_gdf, res=config.data.resolution)
         else:
             postprocessed_gdf = postprocessor.simplify_gdf(raw_gdf)
         logger.info('Geodataframe postprocessed (simplified)')
