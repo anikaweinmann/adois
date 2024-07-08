@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime as DateTime  # PEP8 compliant
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import geopandas as gpd
 
 import src.utils as utils
 from src.aggregation import Aggregator
-from src.data import RemoteSensingDataDownloader
+from src.data import RemoteSensingDataDownloader, RemoteSensingLocalData
 from src.inference import Inference
 from src.postprocessing import Postprocessor
 from src.preprocessing import Preprocessor
@@ -96,17 +97,29 @@ def main():
     preprocessor = Preprocessor()
     logger.debug('Preprocessor initialized')
 
-    rsdd_rgb = RemoteSensingDataDownloader(wms_url=config.data.rgb.wms_url,
-                                           wms_layer=config.data.rgb.wms_layer,
-                                           epsg_code=config.data.epsg_code,
-                                           clip_border=config.data.clip_border)
-    logger.debug('RemoteSensingDataDownloader (rgb) initialized')
+    resolution = None
+    if hasattr(config.data, "dop_dir"):
+        # use local data
+        rsdd_rgbi = RemoteSensingLocalData(
+            config.data.dop_dir,
+            epsg_code=config.data.epsg_code,
+            clip_border=config.data.clip_border,
+        )
+        resolution = config.data.resolution
+        logger.debug('RemoteSensingLocalData (rgbi) initialized')
+    else:
+        # download data
+        rsdd_rgb = RemoteSensingDataDownloader(wms_url=config.data.rgb.wms_url,
+                                            wms_layer=config.data.rgb.wms_layer,
+                                            epsg_code=config.data.epsg_code,
+                                            clip_border=config.data.clip_border)
+        logger.debug('RemoteSensingDataDownloader (rgb) initialized')
 
-    rsdd_nir = RemoteSensingDataDownloader(wms_url=config.data.nir.wms_url,
-                                           wms_layer=config.data.nir.wms_layer,
-                                           epsg_code=config.data.epsg_code,
-                                           clip_border=config.data.clip_border)
-    logger.debug('RemoteSensingDataDownloader (nir) initialized')
+        rsdd_nir = RemoteSensingDataDownloader(wms_url=config.data.nir.wms_url,
+                                            wms_layer=config.data.nir.wms_layer,
+                                            epsg_code=config.data.epsg_code,
+                                            clip_border=config.data.clip_border)
+        logger.debug('RemoteSensingDataDownloader (nir) initialized')
 
     inference = Inference(model_path='data/model/model.onnx',
                           clip_border=config.data.clip_border)
@@ -142,23 +155,47 @@ def main():
                                    min_delta=0)
     progress_bar.refresh()
 
-    for index, coordinates_element in enumerate(filtered_coordinates):
-        rgb_image = rsdd_rgb.get_image(coordinates_element)
-        logger.debug(f'Iteration {index + 1} / {iterations} ->  rgb image downloaded')
-        nir_image = rsdd_nir.get_image(coordinates_element)
-        logger.debug(f'Iteration {index + 1} / {iterations} ->  nir image downloaded')
+    if hasattr(config.data, "dop_dir"):
+        # load local data
+        rgbi_files = [x for x in os.listdir(config.data.dop_dir) if x.endswith(config.data.dop_extension)]
+        coordinates = []
+        for index, rgbi_file in enumerate(rgbi_files):
+            rgbi_image = rsdd_rgbi.get_image(rgbi_file)
+            coordinates_element = rsdd_rgbi.get_top_left_coordinate(rgbi_file)
+            coordinates.append(coordinates_element)
+            logger.debug(f'Iteration {index + 1} / {iterations} ->  rgbi image loaded')
 
-        image = preprocessor.get_image(rgb_image=rgb_image,
-                                       nir_image=nir_image)
+            image = rgbi_image / 255.
+            mask = inference.get_mask(image)
+            # numpy.ndarray
+            logger.debug(f'Iteration {index + 1} / {iterations} -> mask created')
 
-        mask = inference.get_mask(image)
-        logger.debug(f'Iteration {index + 1} / {iterations} -> mask created')
+            postprocessor.vectorize_mask(
+                mask=mask,
+                coordinates=coordinates_element,
+                res=resolution,
+            )
+            logger.debug(f'Iteration {index + 1} / {iterations} -> mask vectorized and cached')
+            logger.info(f'Iteration {index + 1} / {iterations} -> tile cached')
+            progress_bar.update()
+    else:
+        for index, coordinates_element in enumerate(filtered_coordinates):
+            rgb_image = rsdd_rgb.get_image(coordinates_element)
+            logger.debug(f'Iteration {index + 1} / {iterations} ->  rgb image downloaded')
+            nir_image = rsdd_nir.get_image(coordinates_element)
+            logger.debug(f'Iteration {index + 1} / {iterations} ->  nir image downloaded')
 
-        postprocessor.vectorize_mask(mask=mask,
-                                     coordinates=coordinates_element)
-        logger.debug(f'Iteration {index + 1} / {iterations} -> mask vectorized and cached')
-        logger.info(f'Iteration {index + 1} / {iterations} -> tile cached')
-        progress_bar.update()
+            image = preprocessor.get_image(rgb_image=rgb_image,
+                                        nir_image=nir_image)
+
+            mask = inference.get_mask(image)
+            logger.debug(f'Iteration {index + 1} / {iterations} -> mask created')
+
+            postprocessor.vectorize_mask(mask=mask,
+                                        coordinates=coordinates_element)
+            logger.debug(f'Iteration {index + 1} / {iterations} -> mask vectorized and cached')
+            logger.info(f'Iteration {index + 1} / {iterations} -> tile cached')
+            progress_bar.update()
     # endregion
 
     # region Postprocessing
@@ -179,9 +216,9 @@ def main():
 
     if config.postprocessing.simplify:
         if postprocessed_gdf is not None:
-            postprocessed_gdf = postprocessor.simplify_gdf(postprocessed_gdf)
+            postprocessed_gdf = postprocessor.simplify_gdf(postprocessed_gdf, res=resolution)
         else:
-            postprocessed_gdf = postprocessor.simplify_gdf(raw_gdf)
+            postprocessed_gdf = postprocessor.simplify_gdf(raw_gdf, res=resolution)
         logger.info('Geodataframe postprocessed (simplified)')
     # endregion
 
