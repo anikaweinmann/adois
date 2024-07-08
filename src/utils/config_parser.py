@@ -174,6 +174,94 @@ class Data(BaseModel):
         return value
 
 
+class LocalData(BaseModel):
+    dop_dir: str
+    epsg_code: int
+    boundary_shape_file_path: Optional[str] = None
+    bounding_box: Optional[List[int]]
+    clip_border: Optional[bool] = False
+    ignore_cached_tiles: Optional[bool] = False
+
+    @validator('boundary_shape_file_path')
+    def validate_boundary_shape_file_path(cls, value):
+        """
+        | Validates boundary_shape_file_path defined in the config file.
+
+        :param str or None value: boundary_shape_file_path
+        :returns: validated boundary_shape_file_path
+        :rtype: str or None
+        :raises ShapeFileNotFoundError: if shape file at boundary_shape_file_path does not exist
+        :raises ShapeFileExtensionError: if file extension of boundary_shape_file_path is not .shp
+        """
+        if value is not None:
+            if not Path(value).is_file():
+                raise ShapeFileNotFoundError(shape_file_path=value)
+            elif Path(value).suffix != '.shp':
+                raise ShapeFileExtensionError(shape_file_path=value)
+            boundary_gdf = gpd.read_file(value)
+            if boundary_gdf.shape[0] != 1:
+                raise ShapeFileLengthError(gdf=boundary_gdf)
+        return value
+
+    @validator('bounding_box', always=True)
+    def validate_bounding_box(cls,
+                              value,
+                              values):
+        """
+        | Validates bounding_box defined in the config file.
+
+        :param list[int] or None value: bounding_box (x_1, y_1, x_2, y_2)
+        :param dict[str, Any] values: config
+        :returns: validated bounding_box
+        :rtype: (int, int, int, int) or None
+        :raises BoundingBoxNotDefinedError: if neither boundary_shape_file_path nor bounding_box are defined
+            in the config file
+        :raises BoundingBoxLengthError: if the length of bounding_box is not equal to 4
+        :raises BoundingBoxError: if x_1 >= x_2 or y_1 >= y_2
+        """
+        if value is None and values['boundary_shape_file_path'] is None:
+            raise BoundingBoxNotDefinedError()
+        if value is not None and values['boundary_shape_file_path'] is None:
+            if len(value) != 4:
+                raise BoundingBoxLengthError(bounding_box=value)
+            elif value[0] >= value[2] or value[1] >= value[3]:
+                raise BoundingBoxError(bounding_box=value)
+        else:
+            boundary_gdf = gpd.read_file(values['boundary_shape_file_path'])
+            boundary_gdf_bounding_box = boundary_gdf.total_bounds
+            value = [int(np.floor(boundary_gdf_bounding_box[0])),
+                     int(np.floor(boundary_gdf_bounding_box[1])),
+                     int(np.ceil(boundary_gdf_bounding_box[2])),
+                     int(np.ceil(boundary_gdf_bounding_box[3]))]
+        value = tuple(value)
+        return value
+
+    @validator('clip_border')
+    def validate_clip_border(cls, value):
+        """
+        | Validates clip_border defined in the config file.
+
+        :param bool or None value: clip_border
+        :returns: validated clip_border
+        :rtype: bool
+        """
+        if value is None:
+            value = False
+        return value
+
+    @validator('ignore_cached_tiles')
+    def validate_ignore_cached_tiles(cls, value):
+        """
+        | Validates ignore_cached_tiles defined in the config file.
+
+        :param bool or None value: ignore_cached_tiles
+        :returns: validated ignore_cached_tiles
+        :rtype: bool
+        """
+        if value is None:
+            value = False
+        return value
+
 class Postprocessing(BaseModel):
     sieve_size: Optional[int] = None
     simplify: Optional[bool] = False
@@ -319,6 +407,27 @@ class ExportSettings(BaseModel):
         return value
 
 
+class ConfigLocalData(BaseModel):
+
+    data: LocalData
+    postprocessing: Optional[Postprocessing] = Postprocessing()
+    aggregation: Optional[Aggregation] = Aggregation()
+    export_settings: ExportSettings
+
+    @root_validator
+    def validate_export_raw_shape_file(cls, values):
+        """
+        | Validates export_raw_shape_file defined in the config file.
+
+        :param dict[str, Any] values: config
+        :returns: validated config
+        :rtype: dict[str, Any]
+        """
+        if values['postprocessing'].sieve_size is None and values['postprocessing'].simplify is False:
+            values['export_settings'].export_raw_shape_file = False
+        return values
+
+
 class Config(BaseModel):
     data: Data
     postprocessing: Optional[Postprocessing] = Postprocessing()
@@ -417,5 +526,8 @@ class ConfigParser:
         """
         self.update_config_dict()
         self.clean_config_dict()
-        parsed_config = Config(**self.config_dict)
+        if "dop_dir" in self.config_dict["data"]:
+            parsed_config = ConfigLocalData(**self.config_dict)
+        else:
+            parsed_config = Config(**self.config_dict)
         return parsed_config

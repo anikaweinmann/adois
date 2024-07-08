@@ -1,10 +1,53 @@
 from io import BytesIO
 
 import numpy as np
+import os
 from PIL import Image
+import rasterio as rio
 from owslib.wms import WebMapService
 
 import src.utils.settings as settings
+
+
+class RemoteSensingLocalData:
+    def __init__(self,
+                dop_dir,
+                epsg_code,
+                clip_border):
+        """
+        | Constructor method
+
+        :param str dop_dir: TODO
+        :param int epsg_code: epsg code of the coordinate reference system
+        :param bool clip_border: if True, the image size is increased by the border size
+        :returns: None
+        :rtype: None
+        """
+        self.dop_dir = dop_dir
+        self.epsg_code = epsg_code
+        self.clip_border = clip_border
+
+    def get_image(self, tif_file):
+        """
+        | Returns an image given its coordinates of the top left corner.
+
+        :returns: image
+        """
+        tif_path = os.path.join(self.dop_dir, tif_file)
+        image = np.asarray(Image.open(tif_path), dtype=np.float32)
+
+        return image
+
+    def get_top_left_coordinate(self, tif_file):
+        """
+        Returns the coordintate element of the tif file.
+
+        :returns: coordinates (x, y)
+        """
+        tif_path = os.path.join(self.dop_dir, tif_file)
+        img = rio.open(tif_path)
+        bbox = img.bounds
+        return (int(bbox.left), int(bbox.bottom))
 
 
 class RemoteSensingDataDownloader:
